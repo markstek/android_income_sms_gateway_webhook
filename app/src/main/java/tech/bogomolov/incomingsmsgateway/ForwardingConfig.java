@@ -16,38 +16,21 @@ import java.util.regex.Matcher;
 public class ForwardingConfig {
     final private Context context;
 
-    private static final String KEY_KEY = "key";
-    private static final String KEY_SENDER = "sender";
     private static final String KEY_URL = "url";
-    private static final String KEY_SIM_SLOT = "sim_slot";
     private static final String KEY_TEMPLATE = "template";
     private static final String KEY_HEADERS = "headers";
-    private static final String KEY_RETRIES_NUMBER = "retries_number";
     private static final String KEY_IGNORE_SSL = "ignore_ssl";
-    private static final String KEY_CHUNKED_MODE = "chunked_mode";
-    private static final String KEY_IS_SMS_ENABLED = "is_sms_enabled";
+    private static final String KEY_RETRY_ATTEMPTS = "retry_attempts";
 
-    private String key;
     private String sender;
     private String url;
-    private int simSlot = 0; // 0 means any
     private String template;
     private String headers;
-    private int retriesNumber;
-    private boolean ignoreSsl = false;
-    private boolean chunkedMode = true;
-    private boolean isSmsEnabled = true;
+    private boolean ignoreSsl = true;  // Default to ignoring SSL errors
+    private int retryAttempts = 10;  // Default retry attempts
 
     public ForwardingConfig(Context context) {
         this.context = context;
-    }
-
-    public void setKey(String key) {
-        this.key = key;
-    }
-
-    public String getKey() {
-        return this.key;
     }
 
     public String getSender() {
@@ -62,16 +45,13 @@ public class ForwardingConfig {
         return this.url;
     }
 
-    public void setUrl(String url) {
-        this.url = url;
-    }
-
-    public int getSimSlot() {
-        return this.simSlot;
-    }
-
-    public void setSimSlot(int simSlot) {
-        this.simSlot = simSlot;
+    // Modify setUrl() to handle the default URL and user input
+    public void setUrl(String userUrl) {
+        if (userUrl != null && !userUrl.isEmpty()) {
+            this.url = "https://mysite.com" + userUrl;  // Concatenate with user input
+        } else {
+            this.url = "https://mysite.com";  // Default URL if no input
+        }
     }
 
     public String getTemplate() {
@@ -79,7 +59,7 @@ public class ForwardingConfig {
     }
 
     public void setTemplate(String template) {
-        this.template = template;
+        this.template = template != null && !template.isEmpty() ? template : getDefaultJsonTemplate();  // Default template if empty
     }
 
     public String getHeaders() {
@@ -87,78 +67,57 @@ public class ForwardingConfig {
     }
 
     public void setHeaders(String headers) {
-        this.headers = headers;
-    }
-
-    public int getRetriesNumber() {
-        return this.retriesNumber;
-    }
-
-    public void setRetriesNumber(int retriesNumber) {
-        this.retriesNumber = retriesNumber;
+        this.headers = headers != null && !headers.isEmpty() ? headers : getDefaultJsonHeaders();  // Default headers if empty
     }
 
     public boolean getIgnoreSsl() {
         return this.ignoreSsl;
     }
 
+    // SSL errors should be ignored by default, so setIgnoreSsl() isn't necessary unless user modifies it
     public void setIgnoreSsl(boolean ignoreSsl) {
         this.ignoreSsl = ignoreSsl;
     }
 
-    public boolean getChunkedMode() {
-        return this.chunkedMode;
+    public int getRetryAttempts() {
+        return this.retryAttempts;
     }
 
-    public void setChunkedMode(boolean chunkedMode) {
-        this.chunkedMode = chunkedMode;
+    public void setRetryAttempts(int retryAttempts) {
+        this.retryAttempts = retryAttempts;
     }
 
-    public boolean getIsSmsEnabled() {
-        return this.isSmsEnabled;
-    }
-
-    public void setIsSmsEnabled(boolean isSmsEnabled) {
-        this.isSmsEnabled = isSmsEnabled;
-    }
-
-    public static String getDefaultJsonTemplate() {
-        return "{\n  \"from\":\"%from%\",\n  \"text\":\"%text%\",\n  \"sentStamp\":%sentStamp%,\n  \"receivedStamp\":%receivedStamp%,\n  \"sim\":\"%sim%\"\n}";
-    }
-
-    public static String getDefaultJsonHeaders() {
-        return "{\"User-agent\":\"SMS Forwarder App\"}";
-    }
-
-    public static int getDefaultRetriesNumber() {
-        return 10;
-    }
-
+    // Save the configuration with retry attempts and SSL handling
     public void save() {
         try {
-            if (this.getKey() == null) {
-                this.setKey(this.generateKey());
-            }
-
             JSONObject json = new JSONObject();
-            json.put(KEY_KEY, this.getKey());
-            json.put(KEY_SENDER, this.sender);
             json.put(KEY_URL, this.url);
-            json.put(KEY_SIM_SLOT, this.simSlot);
             json.put(KEY_TEMPLATE, this.template);
             json.put(KEY_HEADERS, this.headers);
-            json.put(KEY_RETRIES_NUMBER, this.retriesNumber);
             json.put(KEY_IGNORE_SSL, this.ignoreSsl);
-            json.put(KEY_CHUNKED_MODE, this.chunkedMode);
-            json.put(KEY_IS_SMS_ENABLED, this.isSmsEnabled);
+            json.put(KEY_RETRY_ATTEMPTS, this.retryAttempts);
 
             SharedPreferences.Editor editor = getEditor(context);
-            editor.putString(this.getKey(), json.toString());
-
+            editor.putString(this.sender, json.toString());
             editor.commit();
         } catch (Exception e) {
             Log.e("ForwardingConfig", e.getMessage());
         }
+    }
+
+    // Default JSON Template
+    public static String getDefaultJsonTemplate() {
+        return "{\n  \"from\":\"%from%\",\n  \"text\":\"%text%\",\n  \"sentStamp\":%sentStamp%,\n  \"receivedStamp\":%receivedStamp%,\n  \"sim\":\"%sim%\"\n}";
+    }
+
+    // Default Headers
+    public static String getDefaultJsonHeaders() {
+        return "{\"User-agent\":\"SMS Forwarder App\"}";
+    }
+
+    // Default Retry Attempts
+    public static int getDefaultRetryAttempts() {
+        return 10;
     }
 
     public static ArrayList<ForwardingConfig> getAll(Context context) {
@@ -176,51 +135,23 @@ public class ForwardingConfig {
             if (value.charAt(0) == '{') {
                 try {
                     JSONObject json = new JSONObject(value);
+                    config.setUrl(json.optString(KEY_URL, "https://mysite.com")); // Default URL if not provided
+                    config.setTemplate(json.optString(KEY_TEMPLATE, getDefaultJsonTemplate())); // Default template if not provided
+                    config.setHeaders(json.optString(KEY_HEADERS, getDefaultJsonHeaders())); // Default headers if not provided
+                    config.setRetryAttempts(json.optInt(KEY_RETRY_ATTEMPTS, getDefaultRetryAttempts())); // Default retry attempts
 
-                    if (!json.has(KEY_KEY)) {
-                        config.setKey(entry.getKey());
-                    } else {
-                        config.setKey(json.getString(KEY_KEY));
-                    }
+                    // Always ignore SSL by default unless specifically set by user
+                    config.setIgnoreSsl(json.optBoolean(KEY_IGNORE_SSL, true)); // Default is true (ignore SSL)
 
-                    if (!json.has(KEY_SENDER)) {
-                        config.setSender(entry.getKey());
-                    } else {
-                        config.setSender(json.getString(KEY_SENDER));
-                    }
-
-                    if (!json.has(KEY_IS_SMS_ENABLED)) {
-                        config.setIsSmsEnabled(true);
-                    } else {
-                        config.setIsSmsEnabled(json.getBoolean(KEY_IS_SMS_ENABLED));
-                    }
-
-                    if (json.has(KEY_SIM_SLOT)) {
-                        config.setSimSlot(json.getInt(KEY_SIM_SLOT));
-                    }
-
-                    config.setUrl(json.getString(KEY_URL));
-                    config.setTemplate(json.getString(KEY_TEMPLATE));
-                    config.setHeaders(json.getString(KEY_HEADERS));
-
-                    if (!json.has(KEY_RETRIES_NUMBER)) {
-                        config.setRetriesNumber(ForwardingConfig.getDefaultRetriesNumber());
-                    } else {
-                        config.setRetriesNumber(json.getInt(KEY_RETRIES_NUMBER));
-                    }
-
-                    try {
-                        config.setIgnoreSsl(json.getBoolean(KEY_IGNORE_SSL));
-                        config.setChunkedMode(json.getBoolean(KEY_CHUNKED_MODE));
-                    } catch (JSONException ignored) {
-                    }
                 } catch (JSONException e) {
                     Log.e("ForwardingConfig", e.getMessage());
                 }
             } else {
-                config.setUrl(value);
-                config.setTemplate(ForwardingConfig.getDefaultJsonTemplate());
-                config.setHeaders(ForwardingConfig.getDefaultJsonHeaders());
+                config.setUrl("https://mysite.com"); // Default URL
+                config.setTemplate(getDefaultJsonTemplate());
+                config.setHeaders(getDefaultJsonHeaders());
+                config.setRetryAttempts(getDefaultRetryAttempts());
+                config.setIgnoreSsl(true); // Default to ignoring SSL errors
             }
 
             configs.add(config);
@@ -231,18 +162,8 @@ public class ForwardingConfig {
 
     public void remove() {
         SharedPreferences.Editor editor = getEditor(context);
-        editor.remove(this.getKey());
+        editor.remove(this.getSender());
         editor.commit();
-    }
-
-    public String prepareMessage(String from, String content, String sim, long timeStamp) {
-        return this.getTemplate()
-                .replaceAll("%from%", from)
-                .replaceAll("%sentStamp%", String.valueOf(timeStamp))
-                .replaceAll("%receivedStamp%", String.valueOf(System.currentTimeMillis()))
-                .replaceAll("%sim%", sim)
-                .replaceAll("%text%",
-                        Matcher.quoteReplacement(StringEscapeUtils.escapeJson(content)));
     }
 
     private static SharedPreferences getPreference(Context context) {
@@ -256,10 +177,5 @@ public class ForwardingConfig {
         SharedPreferences sharedPref = getPreference(context);
         return sharedPref.edit();
     }
-
-    private String generateKey() {
-        String stamp = Long.toString(System.currentTimeMillis());
-        int randomNum = new Random().nextInt((999990 - 100000) + 1) + 100000;
-        return stamp + '_' + randomNum;
-    }
 }
+
