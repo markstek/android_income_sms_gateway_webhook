@@ -34,6 +34,12 @@ jobs:
           sdkmanager --update
           sdkmanager "platforms;android-30" "build-tools;30.0.3"
           
+      - name: Set up Keystore
+        run: |
+          echo "$ANDROID_KEYSTORE" | base64 --decode > $HOME/my-release-key.keystore
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+
       - name: Build APK
         run: ./gradlew assembleRelease
         
